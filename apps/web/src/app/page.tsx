@@ -13,6 +13,7 @@ interface DiagnosticData {
     table: string;
     remediation: string;
     severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    writeImpactScore: 'LOW' | 'MEDIUM' | 'HIGH';
   };
 }
 
@@ -55,7 +56,7 @@ export default function Dashboard() {
         time: new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         latency: log.execution_time_ms,
       }))
-      .reverse(); // Standard chronological order (oldest to newest)
+      .reverse();
   };
 
   const handleAnalyze = async (e: React.FormEvent) => {
@@ -156,7 +157,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <span className="text-xl font-bold tracking-tight text-teal-400 font-mono">SupaMeter_AI</span>
-            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.3</span>
+            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.4</span>
           </div>
           <div className="text-sm text-zinc-400 font-mono">⚡ Performance Gateway Enabled</div>
         </div>
@@ -333,6 +334,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {/* Remediation Script Viewer & Safety Warnings Block */}
                 <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 flex flex-col space-y-3">
                   <div>
                     <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Automated Remediation Script</h3>
@@ -356,6 +358,19 @@ export default function Dashboard() {
                       {renderSqlBlock(result.summary_json?.remediation, result.summary_json?.table)}
                     </pre>
                   </div>
+
+                  {/* Safety Guardrail Alert Banner */}
+                  {(result.summary_json?.writeImpactScore === 'HIGH' || result.summary_json?.writeImpactScore === 'MEDIUM') && (
+                    <div className="bg-amber-950/40 border border-amber-800 text-amber-400 p-3 rounded-lg text-xs font-mono flex items-start space-x-2 animate-pulse">
+                      <span className="text-sm">⚠️</span>
+                      <div>
+                        <strong className="block uppercase tracking-wider text-amber-300">
+                          {result.summary_json.writeImpactScore} Write Impact Warning
+                        </strong>
+                        This table experiences transactional modifications. Applying an extra index will introduce minor write latencies to concurrent INSERT or UPDATE pipelines.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
