@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
 interface DiagnosticData {
   id: string;
@@ -21,7 +22,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DiagnosticData | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const [streamingText, setStreamingText] = useState('');
 
   const [historyLogs, setHistoryLogs] = useState<DiagnosticData[]>([]);
@@ -46,6 +46,18 @@ export default function Dashboard() {
     fetchHistory();
   }, []);
 
+  const getChartData = () => {
+    if (!result?.summary_json?.table) return [];
+    
+    return historyLogs
+      .filter(log => log.summary_json?.table === result.summary_json.table)
+      .map(log => ({
+        time: new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        latency: log.execution_time_ms,
+      }))
+      .reverse(); // Standard chronological order (oldest to newest)
+  };
+
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!rawLog.trim()) return;
@@ -61,7 +73,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rawLog,
-          executionTimeMs: Number(executionTime) || 0,
+          executionTimeMs: parseInt(executionTime, 10) || 0,
         }),
       });
 
@@ -83,12 +95,11 @@ export default function Dashboard() {
         if (streamAccumulator.includes('__METADATA__:')) {
           const parts = streamAccumulator.split('__METADATA__:');
           setStreamingText(parts[0]);
-
+          
           try {
             const finalDataRecord: DiagnosticData = JSON.parse(parts[1].trim());
             setResult(finalDataRecord);
-          } catch (e) {
-          }
+          } catch (e) {}
         } else {
           setStreamingText(streamAccumulator);
         }
@@ -105,11 +116,9 @@ export default function Dashboard() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-
     try {
       const response = await fetch(`/api/logs?id=${id}`, { method: 'DELETE' });
       const json = await response.json();
-
       if (json.success) {
         if (result?.id === id) {
           setResult(null);
@@ -134,14 +143,11 @@ export default function Dashboard() {
     if (remediationText && remediationText.includes('CREATE')) {
       return remediationText.substring(remediationText.indexOf('CREATE'));
     }
-
-    const cleanTableName = tableName.replace('public.', '');
-
-    if (remediationText.toLowerCase().includes('index')) {
+    const cleanTableName = (tableName || 'table').replace('public.', '');
+    if (remediationText?.toLowerCase().includes('index')) {
       return `CREATE INDEX idx_${cleanTableName}_optimization \nON public.${cleanTableName} (order_date, status, total_amount DESC);`;
     }
-
-    return `-- Execute optimization strategy for public.${cleanTableName}\n-- Advice: ${remediationText}`;
+    return `-- Execute optimization strategy for public.${cleanTableName}`;
   };
 
   return (
@@ -150,21 +156,21 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <span className="text-xl font-bold tracking-tight text-teal-400 font-mono">SupaMeter_AI</span>
-            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.2</span>
+            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.3</span>
           </div>
           <div className="text-sm text-zinc-400 font-mono">⚡ Performance Gateway Enabled</div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 xl:grid-cols-4 gap-8">
-
+        
         {/* Sidebar Panel */}
-        <aside className="xl:col-span-1 bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 flex flex-col h-[740px]">
+        <aside className="xl:col-span-1 bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 flex flex-col h-[850px]">
           <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-widest mb-3 pb-2 border-b border-zinc-800 flex justify-between items-center">
             <span>Analysis History</span>
             <button onClick={fetchHistory} className="text-teal-500 hover:text-teal-400 text-[10px]">🔄 Refresh</button>
           </h3>
-
+          
           <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
             {historyLoading && historyLogs.length === 0 && (
               <p className="text-xs font-mono text-zinc-600 animate-pulse text-center pt-4">Loading store rows...</p>
@@ -176,29 +182,28 @@ export default function Dashboard() {
               <div
                 key={log.id}
                 onClick={() => setResult(log)}
-                className={`group relative p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 hover:bg-zinc-900 hover:border-zinc-700 ${result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
-                  }`}
+                className={`group relative p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 hover:bg-zinc-900 hover:border-zinc-700 ${
+                  result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
+                }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <div className="flex items-center space-x-1.5 truncate">
                     <span className="text-[10px] font-mono bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 truncate text-zinc-400 max-w-[90px]">
                       {log.summary_json?.table}
                     </span>
-                    <span className={`text-[9px] font-mono font-bold px-1 rounded ${log.summary_json?.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
-                      }`}>
+                    <span className={`text-[9px] font-mono font-bold px-1 rounded ${
+                      log.summary_json?.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
+                    }`}>
                       {log.summary_json?.severity}
                     </span>
                   </div>
-
                   <button
                     onClick={(e) => handleDelete(e, log.id)}
                     className="opacity-0 group-hover:opacity-100 bg-zinc-900 hover:bg-red-950 border border-zinc-800 hover:border-red-800 text-zinc-400 hover:text-red-400 rounded px-1.5 py-0.5 transition-all font-sans text-xs flex items-center justify-center shadow-sm"
-                    title="Prune Record From DB"
                   >
                     🗑️
                   </button>
                 </div>
-
                 <p className="text-xs font-medium text-zinc-300 truncate font-mono">{log.summary_json?.bottleneck}</p>
                 <span className="text-[9px] text-zinc-500 font-mono block mt-1">
                   {new Date(log.created_at).toLocaleTimeString()}
@@ -210,7 +215,7 @@ export default function Dashboard() {
 
         {/* Main Workspace Layout block */}
         <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-8 items-start h-fit">
-          <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col space-y-4 h-[670px]">
+          <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col space-y-4 h-[780px]">
             <div>
               <h2 className="text-lg font-medium text-zinc-200">Query Telemetry Input</h2>
               <p className="text-sm text-zinc-400">Paste your raw PostgreSQL EXPLAIN ANALYZE logs below.</p>
@@ -234,7 +239,7 @@ export default function Dashboard() {
                   value={rawLog}
                   onChange={(e) => setRawLog(e.target.value)}
                   className="w-full flex-1 bg-zinc-950 border border-zinc-800 rounded-lg p-4 text-xs font-mono focus:outline-none focus:border-teal-500 transition-colors resize-none"
-                  placeholder="Paste plan output here... e.g. -> Seq Scan on users..."
+                  placeholder="Paste plan output here..."
                   required
                 />
               </div>
@@ -249,7 +254,7 @@ export default function Dashboard() {
             </form>
           </section>
 
-          <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col min-h-[670px]">
+          <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col min-h-[780px]">
             <h2 className="text-lg font-medium text-zinc-200 mb-4">Diagnostic Evaluation Output</h2>
 
             {error && (
@@ -259,22 +264,21 @@ export default function Dashboard() {
             )}
 
             {!result && !streamingText && !loading && !error && (
-              <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-lg p-8 text-center text-zinc-500 h-[500px]">
+              <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-lg p-8 text-center text-zinc-500 h-[600px]">
                 <div className="text-3xl mb-2">📊</div>
-                <p className="text-sm">No analysis active. Submit an optimization log on the left workspace panel or select an entry from the history panel.</p>
+                <p className="text-sm">No analysis active. Submit an optimization log or select an entry from the history panel.</p>
               </div>
             )}
 
             {loading && !streamingText && (
-              <div className="flex-1 flex flex-col items-center justify-center space-y-3 h-[500px]">
+              <div className="flex-1 flex flex-col items-center justify-center space-y-3 h-[600px]">
                 <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
                 <p className="text-xs font-mono text-zinc-400 animate-pulse">Opening performance gateway text stream...</p>
               </div>
             )}
 
-            {/* Live Streaming Stream View Template Container */}
             {streamingText && !result && (
-              <div className="bg-zinc-950 p-5 rounded-lg border border-zinc-800 font-mono text-xs text-zinc-400 h-[500px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+              <div className="bg-zinc-950 p-5 rounded-lg border border-zinc-800 font-mono text-xs text-zinc-400 h-[600px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner">
                 <div className="flex items-center space-x-2 text-teal-400 mb-3 animate-pulse">
                   <span className="w-2 h-2 bg-teal-400 rounded-full"></span>
                   <span className="text-[10px] uppercase tracking-wider">Streaming Live Telemetry Object Syntax</span>
@@ -284,7 +288,7 @@ export default function Dashboard() {
             )}
 
             {result && (
-              <div className="space-y-6 flex-1 animate-fadeIn">
+              <div className="space-y-5 flex-1 animate-fadeIn">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
                     <span className="block text-xs font-mono text-zinc-500 uppercase">Log Track ID</span>
@@ -296,25 +300,46 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className={`p-5 rounded-lg border flex flex-col space-y-2 ${getSeverityBadgeColor(result.summary_json?.severity)}`}>
+                <div className={`p-4 rounded-lg border flex flex-col space-y-2 ${getSeverityBadgeColor(result.summary_json?.severity)}`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold tracking-widest uppercase">[{result.summary_json?.severity} SEVERITY DETECTED]</span>
+                    <span className="text-xs font-mono font-bold tracking-widest uppercase">[{result.summary_json?.severity} SEVERITY]</span>
                     <span className="text-xs font-mono bg-black/40 px-2.5 py-0.5 rounded border border-current">
                       Table: {result.summary_json?.table}
                     </span>
                   </div>
-                  <div className="text-xl font-bold font-mono pt-1">
+                  <div className="text-lg font-bold font-mono pt-1">
                     Bottleneck: {result.summary_json?.bottleneck}
                   </div>
                 </div>
 
-                <div className="bg-zinc-950 p-5 rounded-lg border border-zinc-800 flex flex-col space-y-3">
+                {/* Performance Analytics Recharts Delta Stream Area */}
+                <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
+                  <span className="block text-xs font-mono text-zinc-500 uppercase mb-3">
+                    📉 Latency Delta Trend for <span className="text-teal-400 font-bold">{result.summary_json?.table}</span>
+                  </span>
+                  <div className="w-full h-[140px] text-xs font-mono">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={getChartData()} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                        <XAxis dataKey="time" stroke="#52525b" tickLine={false} />
+                        <YAxis stroke="#52525b" tickLine={false} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', borderRadius: '6px' }}
+                          labelStyle={{ color: '#a1a1aa' }}
+                          itemStyle={{ color: '#2dd4bf' }}
+                        />
+                        <Area type="monotone" dataKey="latency" name="Latency (ms)" stroke="#14b8a6" fill="rgba(20, 184, 166, 0.1)" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 flex flex-col space-y-3">
                   <div>
                     <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Automated Remediation Script</h3>
-                    <p className="text-sm text-zinc-300 mt-2 leading-relaxed">{result.summary_json?.remediation}</p>
+                    <p className="text-xs text-zinc-300 mt-1 leading-relaxed">{result.summary_json?.remediation}</p>
                   </div>
-
-                  <div className="relative group/code bg-zinc-900 rounded-lg p-4 font-mono text-xs text-teal-400 border border-zinc-800 overflow-x-auto shadow-inner">
+                  
+                  <div className="relative group/code bg-zinc-900 rounded-lg p-3 font-mono text-xs text-teal-400 border border-zinc-800 overflow-x-auto shadow-inner">
                     <div className="absolute right-3 top-3 opacity-0 group-hover/code:opacity-100 transition-opacity">
                       <button
                         onClick={() => {
@@ -335,7 +360,7 @@ export default function Dashboard() {
 
                 <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
                   <span className="block text-xs font-mono text-zinc-500 uppercase mb-2">Original Log Analyzed</span>
-                  <pre className="text-[10px] font-mono text-zinc-400 overflow-x-auto bg-zinc-900 p-3 rounded border border-zinc-800 max-h-[120px] whitespace-pre-wrap">
+                  <pre className="text-[10px] font-mono text-zinc-400 overflow-x-auto bg-zinc-900 p-3 rounded border border-zinc-800 max-h-[80px] whitespace-pre-wrap">
                     {result.raw_explain_text}
                   </pre>
                 </div>
