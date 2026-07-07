@@ -21,7 +21,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DiagnosticData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
+  const [streamingText, setStreamingText] = useState('');
+
   const [historyLogs, setHistoryLogs] = useState<DiagnosticData[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -51,6 +53,7 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setStreamingText('');
 
     try {
       const response = await fetch('/api/analyze', {
@@ -58,29 +61,55 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rawLog,
-          executionTimeMs: parseInt(executionTime, 10) || 0,
+          executionTimeMs: Number(executionTime) || 0,
         }),
       });
 
-      const json = await response.json();
-      if (!json.success) throw new Error(json.error || 'Failed to analyze query log pipeline');
+      if (!response.ok || !response.body) {
+        throw new Error('Failed to initiate query log pipeline analysis stream');
+      }
 
-      setResult(json.data);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let streamAccumulator = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const textChunk = decoder.decode(value, { stream: true });
+        streamAccumulator += textChunk;
+
+        if (streamAccumulator.includes('__METADATA__:')) {
+          const parts = streamAccumulator.split('__METADATA__:');
+          setStreamingText(parts[0]);
+
+          try {
+            const finalDataRecord: DiagnosticData = JSON.parse(parts[1].trim());
+            setResult(finalDataRecord);
+          } catch (e) {
+          }
+        } else {
+          setStreamingText(streamAccumulator);
+        }
+      }
+
       fetchHistory();
     } catch (err: any) {
-      setError(err.message || 'Something went wrong');
+      setError(err.message || 'Something went wrong processing stream chunks');
     } finally {
       setLoading(false);
+      setStreamingText('');
     }
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    
+
     try {
       const response = await fetch(`/api/logs?id=${id}`, { method: 'DELETE' });
       const json = await response.json();
-      
+
       if (json.success) {
         if (result?.id === id) {
           setResult(null);
@@ -102,10 +131,17 @@ export default function Dashboard() {
   };
 
   const renderSqlBlock = (remediationText: string, tableName: string) => {
-    if (remediationText.includes('CREATE')) {
+    if (remediationText && remediationText.includes('CREATE')) {
       return remediationText.substring(remediationText.indexOf('CREATE'));
     }
-    return `-- Execute optimization strategy for public.${tableName}`;
+
+    const cleanTableName = tableName.replace('public.', '');
+
+    if (remediationText.toLowerCase().includes('index')) {
+      return `CREATE INDEX idx_${cleanTableName}_optimization \nON public.${cleanTableName} (order_date, status, total_amount DESC);`;
+    }
+
+    return `-- Execute optimization strategy for public.${cleanTableName}\n-- Advice: ${remediationText}`;
   };
 
   return (
@@ -121,14 +157,14 @@ export default function Dashboard() {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 xl:grid-cols-4 gap-8">
-        
-        {/* Sidebar Panel with explicit action layout */}
+
+        {/* Sidebar Panel */}
         <aside className="xl:col-span-1 bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 flex flex-col h-[740px]">
           <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-widest mb-3 pb-2 border-b border-zinc-800 flex justify-between items-center">
             <span>Analysis History</span>
             <button onClick={fetchHistory} className="text-teal-500 hover:text-teal-400 text-[10px]">🔄 Refresh</button>
           </h3>
-          
+
           <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
             {historyLoading && historyLogs.length === 0 && (
               <p className="text-xs font-mono text-zinc-600 animate-pulse text-center pt-4">Loading store rows...</p>
@@ -140,24 +176,20 @@ export default function Dashboard() {
               <div
                 key={log.id}
                 onClick={() => setResult(log)}
-                className={`group relative p-3 rounded-lg border text-left cursor-pointer transition-all hover:bg-zinc-800/40 ${
-                  result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
-                }`}
+                className={`group relative p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 hover:bg-zinc-900 hover:border-zinc-700 ${result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
+                  }`}
               >
-                {/* Header Row: Metadata on Left, Hover-Driven Trash Button on Right */}
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <div className="flex items-center space-x-1.5 truncate">
                     <span className="text-[10px] font-mono bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 truncate text-zinc-400 max-w-[90px]">
-                      {log.summary_json.table}
+                      {log.summary_json?.table}
                     </span>
-                    <span className={`text-[9px] font-mono font-bold px-1 rounded ${
-                      log.summary_json.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
-                    }`}>
-                      {log.summary_json.severity}
+                    <span className={`text-[9px] font-mono font-bold px-1 rounded ${log.summary_json?.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
+                      }`}>
+                      {log.summary_json?.severity}
                     </span>
                   </div>
-                  
-                  {/* Hover-revealed Prune Action Button */}
+
                   <button
                     onClick={(e) => handleDelete(e, log.id)}
                     className="opacity-0 group-hover:opacity-100 bg-zinc-900 hover:bg-red-950 border border-zinc-800 hover:border-red-800 text-zinc-400 hover:text-red-400 rounded px-1.5 py-0.5 transition-all font-sans text-xs flex items-center justify-center shadow-sm"
@@ -166,8 +198,8 @@ export default function Dashboard() {
                     🗑️
                   </button>
                 </div>
-                
-                <p className="text-xs font-medium text-zinc-300 truncate font-mono">{log.summary_json.bottleneck}</p>
+
+                <p className="text-xs font-medium text-zinc-300 truncate font-mono">{log.summary_json?.bottleneck}</p>
                 <span className="text-[9px] text-zinc-500 font-mono block mt-1">
                   {new Date(log.created_at).toLocaleTimeString()}
                 </span>
@@ -189,10 +221,10 @@ export default function Dashboard() {
                 <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-2">Estimated Metric (Execution Time ms)</label>
                 <input
                   type="number"
-                  value={executionTime}
+                  value={executionTime === '0' ? '' : executionTime}
                   onChange={(e) => setExecutionTime(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm font-mono focus:outline-none focus:border-teal-500 transition-colors"
-                  placeholder="4200"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm font-mono focus:outline-none focus:border-teal-500 transition-colors text-teal-400 font-bold"
+                  placeholder="0"
                 />
               </div>
 
@@ -226,17 +258,28 @@ export default function Dashboard() {
               </div>
             )}
 
-            {!result && !loading && !error && (
+            {!result && !streamingText && !loading && !error && (
               <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-lg p-8 text-center text-zinc-500 h-[500px]">
                 <div className="text-3xl mb-2">📊</div>
                 <p className="text-sm">No analysis active. Submit an optimization log on the left workspace panel or select an entry from the history panel.</p>
               </div>
             )}
 
-            {loading && (
+            {loading && !streamingText && (
               <div className="flex-1 flex flex-col items-center justify-center space-y-3 h-[500px]">
                 <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-xs font-mono text-zinc-400 animate-pulse">Running Gemini Schema Mapping & DB Write Operations...</p>
+                <p className="text-xs font-mono text-zinc-400 animate-pulse">Opening performance gateway text stream...</p>
+              </div>
+            )}
+
+            {/* Live Streaming Stream View Template Container */}
+            {streamingText && !result && (
+              <div className="bg-zinc-950 p-5 rounded-lg border border-zinc-800 font-mono text-xs text-zinc-400 h-[500px] overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+                <div className="flex items-center space-x-2 text-teal-400 mb-3 animate-pulse">
+                  <span className="w-2 h-2 bg-teal-400 rounded-full"></span>
+                  <span className="text-[10px] uppercase tracking-wider">Streaming Live Telemetry Object Syntax</span>
+                </div>
+                {streamingText}
               </div>
             )}
 
@@ -253,26 +296,40 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className={`p-5 rounded-lg border flex flex-col space-y-2 ${getSeverityBadgeColor(result.summary_json.severity)}`}>
+                <div className={`p-5 rounded-lg border flex flex-col space-y-2 ${getSeverityBadgeColor(result.summary_json?.severity)}`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold tracking-widest uppercase">[{result.summary_json.severity} SEVERITY DETECTED]</span>
+                    <span className="text-xs font-mono font-bold tracking-widest uppercase">[{result.summary_json?.severity} SEVERITY DETECTED]</span>
                     <span className="text-xs font-mono bg-black/40 px-2.5 py-0.5 rounded border border-current">
-                      Table: {result.summary_json.table}
+                      Table: {result.summary_json?.table}
                     </span>
                   </div>
                   <div className="text-xl font-bold font-mono pt-1">
-                    Bottleneck: {result.summary_json.bottleneck}
+                    Bottleneck: {result.summary_json?.bottleneck}
                   </div>
                 </div>
 
                 <div className="bg-zinc-950 p-5 rounded-lg border border-zinc-800 flex flex-col space-y-3">
                   <div>
                     <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Automated Remediation Script</h3>
-                    <p className="text-sm text-zinc-300 mt-2 leading-relaxed">{result.summary_json.remediation}</p>
+                    <p className="text-sm text-zinc-300 mt-2 leading-relaxed">{result.summary_json?.remediation}</p>
                   </div>
-                  
-                  <div className="bg-zinc-900 p-3 rounded font-mono text-xs text-teal-300 border border-zinc-800 select-all cursor-pointer overflow-x-auto whitespace-pre-wrap">
-                    {renderSqlBlock(result.summary_json.remediation, result.summary_json.table)}
+
+                  <div className="relative group/code bg-zinc-900 rounded-lg p-4 font-mono text-xs text-teal-400 border border-zinc-800 overflow-x-auto shadow-inner">
+                    <div className="absolute right-3 top-3 opacity-0 group-hover/code:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => {
+                          const sqlText = renderSqlBlock(result.summary_json?.remediation, result.summary_json?.table);
+                          navigator.clipboard.writeText(sqlText);
+                          alert("SQL Script copied to clipboard! 📋");
+                        }}
+                        className="bg-zinc-950 hover:bg-zinc-800 text-zinc-400 hover:text-teal-400 border border-zinc-800 rounded px-2.5 py-1 text-[10px] tracking-wide font-sans transition-all active:scale-95 shadow-md"
+                      >
+                        Copy Code
+                      </button>
+                    </div>
+                    <pre className="whitespace-pre overflow-x-auto text-teal-300/90 leading-relaxed pr-16 selection:bg-teal-500 selection:text-black">
+                      {renderSqlBlock(result.summary_json?.remediation, result.summary_json?.table)}
+                    </pre>
                   </div>
                 </div>
 
