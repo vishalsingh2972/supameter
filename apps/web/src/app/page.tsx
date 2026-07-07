@@ -21,7 +21,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DiagnosticData | null>(null);
   const [error, setError] = useState<string | null>(null);
-
+  
   const [historyLogs, setHistoryLogs] = useState<DiagnosticData[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -30,7 +30,6 @@ export default function Dashboard() {
     try {
       const res = await fetch('/api/logs');
       const json = await res.json();
-
       if (json.success) {
         setHistoryLogs(json.data || []);
       }
@@ -64,10 +63,7 @@ export default function Dashboard() {
       });
 
       const json = await response.json();
-
-      if (!json.success) {
-        throw new Error(json.error || 'Failed to analyze query log pipeline');
-      }
+      if (!json.success) throw new Error(json.error || 'Failed to analyze query log pipeline');
 
       setResult(json.data);
       fetchHistory();
@@ -75,6 +71,24 @@ export default function Dashboard() {
       setError(err.message || 'Something went wrong');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    
+    try {
+      const response = await fetch(`/api/logs?id=${id}`, { method: 'DELETE' });
+      const json = await response.json();
+      
+      if (json.success) {
+        if (result?.id === id) {
+          setResult(null);
+        }
+        fetchHistory();
+      }
+    } catch (err) {
+      console.error('Failed to execute row delete action:', err);
     }
   };
 
@@ -96,27 +110,25 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-teal-500 selection:text-black">
-      {/* Top Header */}
       <header className="border-b border-zinc-800 px-6 py-4 bg-zinc-900/50 backdrop-blur">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <span className="text-xl font-bold tracking-tight text-teal-400 font-mono">SupaMeter_AI</span>
-            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.1</span>
+            <span className="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 font-mono">v1.2</span>
           </div>
           <div className="text-sm text-zinc-400 font-mono">⚡ Performance Gateway Enabled</div>
         </div>
       </header>
 
-      {/* Grid containing History Sidebar + Main workspace */}
       <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 xl:grid-cols-4 gap-8">
-
-        {/* Sidebar Panel: Historic Logs */}
+        
+        {/* Sidebar Panel with explicit action layout */}
         <aside className="xl:col-span-1 bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 flex flex-col h-[740px]">
           <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-widest mb-3 pb-2 border-b border-zinc-800 flex justify-between items-center">
             <span>Analysis History</span>
             <button onClick={fetchHistory} className="text-teal-500 hover:text-teal-400 text-[10px]">🔄 Refresh</button>
           </h3>
-
+          
           <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
             {historyLoading && historyLogs.length === 0 && (
               <p className="text-xs font-mono text-zinc-600 animate-pulse text-center pt-4">Loading store rows...</p>
@@ -128,18 +140,33 @@ export default function Dashboard() {
               <div
                 key={log.id}
                 onClick={() => setResult(log)}
-                className={`p-3 rounded-lg border text-left cursor-pointer transition-all hover:bg-zinc-800/40 ${result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
-                  }`}
+                className={`group relative p-3 rounded-lg border text-left cursor-pointer transition-all hover:bg-zinc-800/40 ${
+                  result?.id === log.id ? 'bg-zinc-900 border-teal-500' : 'bg-zinc-950/60 border-zinc-800'
+                }`}
               >
+                {/* Header Row: Metadata on Left, Hover-Driven Trash Button on Right */}
                 <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <span className="text-[10px] font-mono bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 truncate text-zinc-400 max-w-[100px]">
-                    {log.summary_json.table}
-                  </span>
-                  <span className={`text-[9px] font-mono font-bold px-1 rounded ${log.summary_json.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
+                  <div className="flex items-center space-x-1.5 truncate">
+                    <span className="text-[10px] font-mono bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 truncate text-zinc-400 max-w-[90px]">
+                      {log.summary_json.table}
+                    </span>
+                    <span className={`text-[9px] font-mono font-bold px-1 rounded ${
+                      log.summary_json.severity === 'CRITICAL' ? 'text-red-400' : 'text-zinc-400'
                     }`}>
-                    {log.summary_json.severity}
-                  </span>
+                      {log.summary_json.severity}
+                    </span>
+                  </div>
+                  
+                  {/* Hover-revealed Prune Action Button */}
+                  <button
+                    onClick={(e) => handleDelete(e, log.id)}
+                    className="opacity-0 group-hover:opacity-100 bg-zinc-900 hover:bg-red-950 border border-zinc-800 hover:border-red-800 text-zinc-400 hover:text-red-400 rounded px-1.5 py-0.5 transition-all font-sans text-xs flex items-center justify-center shadow-sm"
+                    title="Prune Record From DB"
+                  >
+                    🗑️
+                  </button>
                 </div>
+                
                 <p className="text-xs font-medium text-zinc-300 truncate font-mono">{log.summary_json.bottleneck}</p>
                 <span className="text-[9px] text-zinc-500 font-mono block mt-1">
                   {new Date(log.created_at).toLocaleTimeString()}
@@ -149,9 +176,8 @@ export default function Dashboard() {
           </div>
         </aside>
 
-        {/* Main Columns Workspace */}
+        {/* Main Workspace Layout block */}
         <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-8 items-start h-fit">
-          {/* Left Block: Form Input */}
           <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col space-y-4 h-[670px]">
             <div>
               <h2 className="text-lg font-medium text-zinc-200">Query Telemetry Input</h2>
@@ -191,7 +217,6 @@ export default function Dashboard() {
             </form>
           </section>
 
-          {/* Right Block: AI Analytics Output */}
           <section className="bg-zinc-900/40 p-6 rounded-xl border border-zinc-800 flex flex-col min-h-[670px]">
             <h2 className="text-lg font-medium text-zinc-200 mb-4">Diagnostic Evaluation Output</h2>
 
@@ -245,7 +270,7 @@ export default function Dashboard() {
                     <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Automated Remediation Script</h3>
                     <p className="text-sm text-zinc-300 mt-2 leading-relaxed">{result.summary_json.remediation}</p>
                   </div>
-
+                  
                   <div className="bg-zinc-900 p-3 rounded font-mono text-xs text-teal-300 border border-zinc-800 select-all cursor-pointer overflow-x-auto whitespace-pre-wrap">
                     {renderSqlBlock(result.summary_json.remediation, result.summary_json.table)}
                   </div>
